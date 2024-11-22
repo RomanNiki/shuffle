@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using App.Scripts.Random.Providers;
+using Cysharp.Threading.Tasks;
 using Unity.VisualScripting;
 using UnityEngine;
 
@@ -38,7 +39,7 @@ namespace App.Scripts.Generator.Handlers
             return i * size + j;
         }
 
-        public List<GridItem> Sort(List<GridItem> items)
+        public async UniTask<List<GridItem>> Sort(List<GridItem> items)
         {
             var targetGroupSize = _configSorterGroups.groupSize;
             var matrixSize = (int)Mathf.Sqrt(items.Count);
@@ -63,11 +64,14 @@ namespace App.Scripts.Generator.Handlers
 
                 err++;
                 island.Clear();
-                freeItems.Shuffle();
+                if (_configSorterGroups.shuffleStartValue)
+                {
+                    freeItems.Shuffle(_providerRandom);
+                }
 
                 var currentItem = freeItems[0];
 
-                if (!TryCreateIsland(currentItem, targetGroupSize, items, usedItems, island))
+                if (!await TryCreateIsland(currentItem, targetGroupSize, items, usedItems, island))
                 {
                     continue;
                 }
@@ -77,17 +81,21 @@ namespace App.Scripts.Generator.Handlers
                 
                 foreach (var islandItem in island)
                 {
+                    //      
                     usedItems.Add(islandItem);
                     freeItems.Remove(islandItem);
                     islandItem.SetColor(color);
                 }
+                await UniTask.WaitUntil(() => Input.anyKeyDown);
             }
+
+            Debug.Log("Finished sorting");
 
 
             return freeItems;
         }
 
-        private bool TryCreateIsland(GridItem currentItem, int targetGroupSize, List<GridItem> gridItems,
+        private async UniTask<bool> TryCreateIsland(GridItem currentItem, int targetGroupSize, List<GridItem> gridItems,
             List<GridItem> usedItems, List<GridItem> island)
         {
             Stack<GridItem> stack = new Stack<GridItem>();
@@ -100,7 +108,10 @@ namespace App.Scripts.Generator.Handlers
                 var item = stack.Pop();
                 Vector2Int itemPosition = item.gridPosition;
 
-                //_directions.Shuffle();
+                if (_configSorterGroups.shuffleDirections)
+                {
+                    _directions.Shuffle(_providerRandom);
+                }
 
                 foreach (var direction in _directions)
                 {
@@ -113,11 +124,12 @@ namespace App.Scripts.Generator.Handlers
                         if (neighborItem != null && !visited.Contains(neighborItem) &&
                             !usedItems.Contains(neighborItem))
                         {
-                            if (!WillCreateEmptySpace(neighborItem, gridItems, usedItems, visited, targetGroupSize))
+                            visited.Add(neighborItem);
+                            if (!await WillCreateEmptySpace(neighborItem, gridItems, usedItems, island,
+                                    targetGroupSize))
                             {
                                 stack.Push(neighborItem);
                                 island.Add(neighborItem);
-                                visited.Add(neighborItem);
                             }
                         }
                     }
@@ -132,11 +144,14 @@ namespace App.Scripts.Generator.Handlers
             return island.Count == targetGroupSize;
         }
 
-        private bool WillCreateEmptySpace(GridItem currentItem, List<GridItem> gridItems, List<GridItem> usedItems,
-            HashSet<GridItem> visited, int targetGroupSize)
+        private async UniTask<bool> WillCreateEmptySpace(GridItem currentItem, List<GridItem> gridItems,
+            List<GridItem> usedItems,
+            List<GridItem> currentIsland, int targetGroupSize)
         {
-            HashSet<GridItem> visitedLocal = new HashSet<GridItem> { currentItem };
-            visitedLocal.AddRange(visited);
+            int i = 0;
+            int currentIslandSize = currentIsland.Count;
+            HashSet<GridItem> visitedLocal = new HashSet<GridItem>() { currentItem };
+            visitedLocal.AddRange(currentIsland);
             int approvedDirections = 0;
             foreach (var direction in _directions)
             {
@@ -147,37 +162,42 @@ namespace App.Scripts.Generator.Handlers
                     GridItem neighborItem = gridItems.Find(i => i.gridPosition == neighborPosition);
 
                     if (neighborItem != null && !usedItems.Contains(neighborItem) &&
-                        !visitedLocal.Contains(neighborItem))
+                        visitedLocal.Add(neighborItem))
                     {
-                        if (!WillCreateEmptySpaceInternal(neighborItem, gridItems, usedItems, visitedLocal,
-                                targetGroupSize))
+                        if (!await WillCreateEmptySpaceInternal(neighborItem, gridItems, usedItems, visitedLocal,
+                                targetGroupSize, currentIslandSize))
                         {
+                            Debug.Log("Dont create empty space");
+                            currentIslandSize++;
                             approvedDirections++;
                         }
                     }
                     else if (visitedLocal.Contains(neighborItem) || usedItems.Contains(neighborItem))
                     {
+                        Debug.Log("Was already visited");
                         approvedDirections++;
                     }
                 }
                 else
                 {
+                    Debug.Log("Out of bounds when finding empty space");
                     approvedDirections++;
                 }
             }
 
+
             return approvedDirections < _directions.Length;
         }
 
-        private bool WillCreateEmptySpaceInternal(GridItem neighborItem, List<GridItem> gridItems,
-            List<GridItem> usedItems, HashSet<GridItem> visited, int targetGroupSize)
+        private async UniTask<bool> WillCreateEmptySpaceInternal(GridItem neighborItem, List<GridItem> gridItems,
+            List<GridItem> usedItems, HashSet<GridItem> visited, int targetGroupSize, int islandSize)
         {
             Stack<GridItem> stack = new Stack<GridItem>();
+            HashSet<GridItem> visitedLocal = new HashSet<GridItem>(){neighborItem};
             stack.Push(neighborItem);
 
             int island = 1;
-            visited.AddRange(visited);
-
+            visitedLocal.AddRange(visited);
             while (stack.Count > 0)
             {
                 var item = stack.Pop();
@@ -191,24 +211,41 @@ namespace App.Scripts.Generator.Handlers
                     {
                         GridItem currentItem = gridItems.Find(i => i.gridPosition == neighborPosition);
 
-                        if (currentItem != null && !visited.Contains(currentItem) &&
-                            (!usedItems.Contains(currentItem)))
+                        if (currentItem != null && !visitedLocal.Contains(currentItem) &&
+                            !usedItems.Contains(currentItem))
                         {
                             stack.Push(currentItem);
-                            visited.Add(currentItem);
+                            visitedLocal.Add(currentItem);
                             island++;
                         }
                     }
                 }
             }
 
-            if (island / targetGroupSize >= (_targetUseItems - (usedItems.Count + island)) / targetGroupSize)
+            if (island % targetGroupSize == 0)
+            {
+                Debug.Log("island % targetGroupSize == 0");
+                return false;
+            }
+            
+            if ((island + islandSize) % targetGroupSize == 0)
+            {
+                Debug.Log("island % targetGroupSize == 0");
+                return false;
+            }
+
+            var spaceLeft = targetGroupSize - islandSize;
+            if (island == spaceLeft)
             {
                 return false;
             }
 
-            if (island % targetGroupSize == 0)
+            var totalIslands = island / targetGroupSize;
+
+            var targetTotalIslands = (_targetUseItems - (usedItems.Count + island)) / targetGroupSize;
+            if (totalIslands >= targetTotalIslands)
             {
+                Debug.Log($"Total islands reached: {totalIslands}");
                 return false;
             }
 
@@ -234,5 +271,7 @@ namespace App.Scripts.Generator.Handlers
     {
         public int groupSize;
         public float percent;
+        public bool shuffleDirections;
+        public bool shuffleStartValue;
     }
 }

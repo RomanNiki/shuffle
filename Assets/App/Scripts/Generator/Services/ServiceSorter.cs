@@ -1,13 +1,15 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using App.Scripts.Generator.Handlers;
+using Cysharp.Threading.Tasks;
 using UnityEngine;
 using VContainer.Unity;
 using Object = UnityEngine.Object;
 
 namespace App.Scripts.Generator.Services
 {
-    public class ServiceSorter : IServiceSorter, IInitializable
+    public class ServiceSorter : IServiceSorter, IAsyncStartable
     {
         private readonly IEnumerable<IHandlerSorter> _handlerSorters;
         private readonly ConfigServiceSorter _configServiceSorter;
@@ -18,17 +20,22 @@ namespace App.Scripts.Generator.Services
             _configServiceSorter = configServiceSorter;
         }
 
-        public List<GridItem> Sort(List<GridItem> groups)
+        public UniTask<List<GridItem>> Sort(List<GridItem> groups)
         {
             foreach (var handlerSorter in _handlerSorters)
             {
                 return handlerSorter.Sort(groups);
             }
 
-            return groups;
+            return UniTask.FromResult(groups) ;
         }
 
         public void Initialize()
+        {
+            
+        }
+
+        public async UniTask StartAsync(CancellationToken cancellation = new CancellationToken())
         {
             var list = new List<GridItem>();
             var gridItemPrefab = _configServiceSorter.prefabItem;
@@ -44,8 +51,7 @@ namespace App.Scripts.Generator.Services
                     gridItem.Setup(_configServiceSorter.defaultColor, new Vector2Int(i, j));
                 }
             }
-            
-            Sort(list);
+            await Sort(list);
         }
     }
 

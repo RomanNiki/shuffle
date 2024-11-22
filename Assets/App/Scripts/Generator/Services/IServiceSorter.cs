@@ -1,9 +1,10 @@
 using System.Collections.Generic;
+using Cysharp.Threading.Tasks;
 
 namespace App.Scripts.Generator.Services
 {
     public interface IServiceSorter
     { 
-        List<GridItem> Sort(List<GridItem> groups);
+        UniTask<List<GridItem>> Sort(List<GridItem> groups);
     }
 }
