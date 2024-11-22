@@ -33,12 +33,6 @@ namespace App.Scripts.Generator.Handlers
             return new List<Color>(uniqueColors);
         }
 
-
-        int GetIndex(int i, int j, int size)
-        {
-            return i * size + j;
-        }
-
         public async UniTask<List<GridItem>> Sort(List<GridItem> items)
         {
             var targetGroupSize = _configSorterGroups.groupSize;
@@ -55,6 +49,7 @@ namespace App.Scripts.Generator.Handlers
             int err = 0;
             List<GridItem> island = new List<GridItem>();
             int islandCount = 0;
+            var ind = 0;
             while (usedItems.Count < _targetUseItems && freeItems.Count >= targetGroupSize)
             {
                 if (err >= _targetUseItems * _targetUseItems + _targetUseItems)
@@ -64,28 +59,43 @@ namespace App.Scripts.Generator.Handlers
 
                 err++;
                 island.Clear();
+                var currentItem = freeItems[ind];
+
                 if (_configSorterGroups.shuffleStartValue)
                 {
                     freeItems.Shuffle(_providerRandom);
                 }
 
-                var currentItem = freeItems[0];
+                foreach (var gridItem in freeItems)
+                {
+                    bool willCreateEmpty =
+                        await WillCreateEmptySpace(gridItem, items, usedItems, island, targetGroupSize);
+
+                    if (!willCreateEmpty)
+                    {
+                        currentItem = gridItem;
+                        break;
+                    }
+                }
 
                 if (!await TryCreateIsland(currentItem, targetGroupSize, items, usedItems, island))
                 {
+                    ind++;
                     continue;
                 }
 
+                ind = 0;
+
                 var color = generateColors[islandCount];
                 islandCount++;
-                
+
                 foreach (var islandItem in island)
                 {
-                    //      
                     usedItems.Add(islandItem);
                     freeItems.Remove(islandItem);
                     islandItem.SetColor(color);
                 }
+
                 await UniTask.WaitUntil(() => Input.anyKeyDown);
             }
 
@@ -95,7 +105,7 @@ namespace App.Scripts.Generator.Handlers
             return freeItems;
         }
 
-        private async UniTask<bool> TryCreateIsland(GridItem currentItem, int targetGroupSize, List<GridItem> gridItems,
+        private async UniTask<bool> TryCreateIsland(GridItem currentItem, int targetGroupSize, List<GridItem> items,
             List<GridItem> usedItems, List<GridItem> island)
         {
             Stack<GridItem> stack = new Stack<GridItem>();
@@ -106,31 +116,22 @@ namespace App.Scripts.Generator.Handlers
             while (stack.Count > 0 && island.Count < targetGroupSize)
             {
                 var item = stack.Pop();
-                Vector2Int itemPosition = item.gridPosition;
 
                 if (_configSorterGroups.shuffleDirections)
                 {
-                    _directions.Shuffle(_providerRandom);
+                    item.Neighbors.Shuffle(_providerRandom);
                 }
 
-                foreach (var direction in _directions)
+                foreach (var itemToPlace in item.Neighbors)
                 {
-                    Vector2Int neighborPosition = itemPosition + direction;
-
-                    if (IsWithinBounds(neighborPosition, (int)Mathf.Sqrt(gridItems.Count)))
+                    if (itemToPlace != null && !visited.Contains(itemToPlace) &&
+                        !usedItems.Contains(itemToPlace))
                     {
-                        GridItem neighborItem = gridItems.Find(i => i.gridPosition == neighborPosition);
-
-                        if (neighborItem != null && !visited.Contains(neighborItem) &&
-                            !usedItems.Contains(neighborItem))
+                        visited.Add(itemToPlace);
+                        if (!await WillCreateEmptySpace(itemToPlace, items, usedItems, island, targetGroupSize))
                         {
-                            visited.Add(neighborItem);
-                            if (!await WillCreateEmptySpace(neighborItem, gridItems, usedItems, island,
-                                    targetGroupSize))
-                            {
-                                stack.Push(neighborItem);
-                                island.Add(neighborItem);
-                            }
+                            stack.Push(itemToPlace);
+                            island.Add(itemToPlace);
                         }
                     }
 
@@ -153,47 +154,35 @@ namespace App.Scripts.Generator.Handlers
             HashSet<GridItem> visitedLocal = new HashSet<GridItem>() { currentItem };
             visitedLocal.AddRange(currentIsland);
             int approvedDirections = 0;
-            foreach (var direction in _directions)
+            foreach (var neighborItem in currentItem.Neighbors)
             {
-                var neighborPosition = currentItem.gridPosition + direction;
-
-                if (IsWithinBounds(neighborPosition, (int)Mathf.Sqrt(gridItems.Count)))
+                if (neighborItem != null && !usedItems.Contains(neighborItem) &&
+                    visitedLocal.Add(neighborItem))
                 {
-                    GridItem neighborItem = gridItems.Find(i => i.gridPosition == neighborPosition);
-
-                    if (neighborItem != null && !usedItems.Contains(neighborItem) &&
-                        visitedLocal.Add(neighborItem))
+                    if (!await WillCreateEmptySpaceInternal(neighborItem, gridItems, usedItems, visitedLocal,
+                            targetGroupSize, currentIslandSize))
                     {
-                        if (!await WillCreateEmptySpaceInternal(neighborItem, gridItems, usedItems, visitedLocal,
-                                targetGroupSize, currentIslandSize))
-                        {
-                            Debug.Log("Dont create empty space");
-                            currentIslandSize++;
-                            approvedDirections++;
-                        }
-                    }
-                    else if (visitedLocal.Contains(neighborItem) || usedItems.Contains(neighborItem))
-                    {
-                        Debug.Log("Was already visited");
+                        Debug.Log("Dont create empty space");
+                        currentIslandSize++;
                         approvedDirections++;
                     }
                 }
-                else
+                else if (visitedLocal.Contains(neighborItem) || usedItems.Contains(neighborItem))
                 {
-                    Debug.Log("Out of bounds when finding empty space");
+                    Debug.Log("Was already visited");
                     approvedDirections++;
                 }
             }
 
 
-            return approvedDirections < _directions.Length;
+            return approvedDirections < currentItem.Neighbors.Count;
         }
 
         private async UniTask<bool> WillCreateEmptySpaceInternal(GridItem neighborItem, List<GridItem> gridItems,
             List<GridItem> usedItems, HashSet<GridItem> visited, int targetGroupSize, int islandSize)
         {
             Stack<GridItem> stack = new Stack<GridItem>();
-            HashSet<GridItem> visitedLocal = new HashSet<GridItem>(){neighborItem};
+            HashSet<GridItem> visitedLocal = new HashSet<GridItem>() { neighborItem };
             stack.Push(neighborItem);
 
             int island = 1;
@@ -201,23 +190,15 @@ namespace App.Scripts.Generator.Handlers
             while (stack.Count > 0)
             {
                 var item = stack.Pop();
-                Vector2Int itemPosition = item.gridPosition;
 
-                foreach (var direction in _directions)
+                foreach (var currentItem in item.Neighbors)
                 {
-                    Vector2Int neighborPosition = itemPosition + direction;
-
-                    if (IsWithinBounds(neighborPosition, (int)Mathf.Sqrt(gridItems.Count)))
+                    if (currentItem != null && !visitedLocal.Contains(currentItem) &&
+                        !usedItems.Contains(currentItem))
                     {
-                        GridItem currentItem = gridItems.Find(i => i.gridPosition == neighborPosition);
-
-                        if (currentItem != null && !visitedLocal.Contains(currentItem) &&
-                            !usedItems.Contains(currentItem))
-                        {
-                            stack.Push(currentItem);
-                            visitedLocal.Add(currentItem);
-                            island++;
-                        }
+                        stack.Push(currentItem);
+                        visitedLocal.Add(currentItem);
+                        island++;
                     }
                 }
             }
@@ -227,7 +208,7 @@ namespace App.Scripts.Generator.Handlers
                 Debug.Log("island % targetGroupSize == 0");
                 return false;
             }
-            
+
             if ((island + islandSize) % targetGroupSize == 0)
             {
                 Debug.Log("island % targetGroupSize == 0");
@@ -250,19 +231,6 @@ namespace App.Scripts.Generator.Handlers
             }
 
             return true;
-        }
-
-        private static Vector2Int[] _directions =
-        {
-            Vector2Int.up,
-            Vector2Int.right,
-            Vector2Int.down,
-            Vector2Int.left,
-        };
-
-        static bool IsWithinBounds(Vector2Int pos, int matrixSize)
-        {
-            return pos.x >= 0 && pos.x < matrixSize && pos.y >= 0 && pos.y < matrixSize;
         }
     }
 
