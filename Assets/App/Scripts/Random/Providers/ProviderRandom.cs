@@ -1,3 +1,4 @@
+using System;
 using VContainer.Unity;
 
 namespace App.Scripts.Random.Providers
@@ -8,7 +9,7 @@ namespace App.Scripts.Random.Providers
 
         public ProviderRandom(int seed = 0)
         {
-            _seed = seed;
+            _seed = DateTime.Now.Millisecond;
         }
 
         public float Value => UnityEngine.Random.value;

@@ -432,9 +432,9 @@ MonoBehaviour:
   autoRun: 1
   autoInjectGameObjects: []
   configSorterGroups:
-    groupSize: 5
+    groupSize: 3
     percent: 1
-    shuffleDirections: 0
+    shuffleDirections: 1
     shuffleStartValue: 0
   configServiceSorter:
     prefabItem: {fileID: 9213117136375847013, guid: 497c13b1b8b9d4e0e958171237c60cd9, type: 3}
