@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using App.Scripts.Random.Providers;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
@@ -14,6 +13,7 @@ namespace App.Scripts.Generator.Handlers
         private readonly IProviderRandom _providerRandom;
         private int _targetGroupsCount;
         private int _targetUseItems;
+        private List<Color> _generateColors;
 
         public HandlerSorterGroups(ConfigSorterGroups configSorterGroups, IProviderRandom providerRandom)
         {
@@ -36,110 +36,53 @@ namespace App.Scripts.Generator.Handlers
 
         public async UniTask<List<GridItem>> Sort(List<GridItem> items)
         {
-            if (_configSorterGroups.shuffleDirections)
-            {
-                foreach (var item in items)
-                {
-                    item.Neighbors.Shuffle(_providerRandom);
-                }
-            }
+            ShuffleDirections(items);
 
             var targetGroupSize = _configSorterGroups.groupSize;
             var percent = _configSorterGroups.percent;
-            
+
             _targetGroupsCount = (int)(items.Count * percent / targetGroupSize);
             _targetUseItems = _targetGroupsCount * targetGroupSize;
-            
-            var extraElementsCount = items.Count - _targetUseItems;
-            List<GridItem> potencialStart = new List<GridItem>();
-            List<GridItem> usedItems = new List<GridItem>();
-            List<Color> generateColors = GenerateColors(_targetGroupsCount + 1);
+            _generateColors = GenerateColors(_targetGroupsCount + 1);
+
+            List<GridItem> potentialStart = new List<GridItem>();
+            HashSet<GridItem> usedItems = new HashSet<GridItem>();
             HashSet<GridItem> canNotUseAsStart = new HashSet<GridItem>();
-            
-            potencialStart.AddRange(items);
+            List<GridItem> currentIsland = new List<GridItem>();
 
-            for (int i = 0; i < extraElementsCount; i++)
-            {
-                var itemToRemove = items[i];
-                usedItems.Add(itemToRemove);
-                potencialStart.Remove(itemToRemove);
-                itemToRemove.SetColor(Color.black);
-            }
+            potentialStart.AddRange(items);
 
-            if (_configSorterGroups.shuffleStartValue)
-            {
-                potencialStart.Shuffle(_providerRandom);
-            }
+            ExcludeExtraItems(items, usedItems, potentialStart);
 
-            int err = 0;
-            List<GridItem> island = new List<GridItem>();
             int islandCount = 0;
-            var ind = 0;
-            while (usedItems.Count < _targetUseItems && potencialStart.Count >= targetGroupSize)
+
+            while (usedItems.Count < _targetUseItems && potentialStart.Count > 0)
             {
-                if (err >= _targetUseItems * _targetUseItems + _targetUseItems)
+                foreach (GridItem item in potentialStart)
                 {
-                    throw new StackOverflowException($"at index {island[0].gridPosition}");
+                    item.SetColor(Color.magenta);
                 }
 
-                err++;
-                island.Clear();
-                var currentItem = potencialStart[ind];
+                //await UniTask.WaitUntil(() => Input.anyKeyDown);
+                currentIsland.Clear();
+                var currentItem = potentialStart[0];
 
-                bool lastPlace = false;
-                foreach (var gridItem in potencialStart)
+                currentItem = await CanUseStartItem(items, potentialStart, canNotUseAsStart,
+                    currentIsland,
+                    usedItems, targetGroupSize, currentItem);
+
+                if (currentIsland.Count != targetGroupSize)
                 {
-                    if (canNotUseAsStart.Contains(gridItem))
+                    if (!await TryCreateIsland(currentItem, targetGroupSize, items, usedItems, currentIsland))
                     {
-                        continue;
-                    }
-                    island.Add(gridItem);
-                    
-                    bool willCreateEmpty =
-                        await WillCreateEmptySpace(gridItem, items, usedItems, island, targetGroupSize);
-
-                    if (willCreateEmpty)
-                    {
-                        canNotUseAsStart.Add(gridItem);
-                    }
-
-                    if (island.Count == targetGroupSize)
-                    {
-                        lastPlace = true;
-                    }
-                    else
-                    {
-                        island.Clear();
-                    }
-
-                    if (!willCreateEmpty)
-                    {
-                        currentItem = gridItem;
-                        break;
-                    }
-                }
-
-                if (!lastPlace)
-                {
-                    if (!await TryCreateIsland(currentItem, targetGroupSize, items, usedItems, island))
-                    {
-                        ind++;
-                        potencialStart.Remove(currentItem);
+                        potentialStart.Remove(currentItem);
                         continue;
                     }
                 }
 
-                ind = 0;
-
-                var color = generateColors[islandCount];
                 islandCount++;
 
-                foreach (var islandItem in island)
-                {
-                    usedItems.Add(islandItem);
-                    potencialStart.Remove(islandItem);
-                    islandItem.SetColor(color);
-                }
+                ApplyIslandToWorld(currentIsland, usedItems, potentialStart, islandCount);
 
                 await UniTask.WaitUntil(() => Input.anyKeyDown);
             }
@@ -147,11 +90,83 @@ namespace App.Scripts.Generator.Handlers
             Debug.Log("Finished sorting");
 
 
-            return potencialStart;
+            return potentialStart;
+        }
+
+        private void ExcludeExtraItems(List<GridItem> items, HashSet<GridItem> usedItems, List<GridItem> potentialStart)
+        {
+            var extraElementsCount = items.Count - _targetUseItems;
+            for (int i = 0; i < extraElementsCount; i++)
+            {
+                var itemToRemove = items[i];
+                usedItems.Add(itemToRemove);
+                potentialStart.Remove(itemToRemove);
+            }
+        }
+
+        private void ShuffleDirections(List<GridItem> items)
+        {
+            if (_configSorterGroups.shuffleDirections)
+            {
+                foreach (var item in items)
+                {
+                    item.Neighbors.Shuffle(_providerRandom);
+                }
+            }
+        }
+
+        private async UniTask<GridItem> CanUseStartItem(List<GridItem> items,
+            List<GridItem> potentialStart, HashSet<GridItem> canNotUseAsStart, List<GridItem> currentIsland,
+            IReadOnlyCollection<GridItem> usedItems, int targetGroupSize, GridItem currentItem)
+        {
+            foreach (var gridItem in potentialStart)
+            {
+                if (canNotUseAsStart.Contains(gridItem))
+                {
+                    continue;
+                }
+
+                currentIsland.Add(gridItem);
+
+                bool willCreateEmpty =
+                    await WillCreateEmptySpace(gridItem, items, usedItems, currentIsland, targetGroupSize);
+
+                if (willCreateEmpty)
+                {
+                    canNotUseAsStart.Add(gridItem);
+                }
+
+                if (currentIsland.Count == targetGroupSize)
+                {
+                    break;
+                }
+
+                currentIsland.Clear();
+
+                if (!willCreateEmpty)
+                {
+                    currentItem = gridItem;
+                    break;
+                }
+            }
+
+            return currentItem;
+        }
+
+        private void ApplyIslandToWorld(List<GridItem> currentIsland, HashSet<GridItem> usedItems,
+            List<GridItem> potentialStart, int i)
+        {
+            var color = _generateColors[i];
+            foreach (var islandItem in currentIsland)
+            {
+                usedItems.Add(islandItem);
+                potentialStart.Remove(islandItem);
+                islandItem.SetColor(color);
+            }
         }
 
         private async UniTask<bool> TryCreateIsland(GridItem currentItem, int targetGroupSize, List<GridItem> items,
-            List<GridItem> usedItems, List<GridItem> island)
+            HashSet<GridItem> usedItems, List<GridItem> island)
         {
             Stack<GridItem> stack = new Stack<GridItem>();
             HashSet<GridItem> visited = new HashSet<GridItem> { currentItem };
@@ -166,16 +181,7 @@ namespace App.Scripts.Generator.Handlers
                 {
                     if (!visited.Contains(itemToPlace) && !usedItems.Contains(itemToPlace))
                     {
-                        island.Add(itemToPlace);
-                        if (!await WillCreateEmptySpace(itemToPlace, items, usedItems, island, targetGroupSize))
-                        {
-                            visited.Add(itemToPlace);
-                            stack.Push(itemToPlace);
-                        }
-                        else
-                        {
-                            island.Remove(itemToPlace);
-                        }
+                        await TrySetIslandItem(targetGroupSize, items, usedItems, island, itemToPlace, visited, stack);
                     }
 
                     if (island.Count == targetGroupSize)
@@ -188,36 +194,50 @@ namespace App.Scripts.Generator.Handlers
             return island.Count == targetGroupSize;
         }
 
-        private async UniTask<bool> WillCreateEmptySpace(GridItem currentItem, List<GridItem> gridItems,
-            List<GridItem> usedItems, List<GridItem> currentIsland, int targetGroupSize)
+        private async UniTask TrySetIslandItem(int targetGroupSize, List<GridItem> items,
+            IReadOnlyCollection<GridItem> usedItems,
+            List<GridItem> island, GridItem itemToPlace,
+            HashSet<GridItem> visited, Stack<GridItem> stack)
         {
-            var simulatedUsedItems = new HashSet<GridItem>(usedItems);
+            island.Add(itemToPlace);
+
+            if (!await WillCreateEmptySpace(itemToPlace, items, usedItems, island, targetGroupSize))
+            {
+                visited.Add(itemToPlace);
+                stack.Push(itemToPlace);
+            }
+            else
+            {
+                island.Remove(itemToPlace);
+            }
+        }
+
+        private async UniTask<bool> WillCreateEmptySpace(GridItem currentItem, List<GridItem> gridItems,
+            IReadOnlyCollection<GridItem> usedItems, List<GridItem> currentIsland, int targetGroupSize)
+        {
+            HashSet<GridItem> simulatedUsedItems = new HashSet<GridItem>(usedItems);
             simulatedUsedItems.UnionWith(currentIsland);
             simulatedUsedItems.Add(currentItem);
 
-            var remainingItems = gridItems.Except(simulatedUsedItems).ToList();
-            var visited = new HashSet<GridItem>();
-
-            var colr = currentItem.GetColor();
-           // currentItem.SetColor(Color.blue);
-            bool candidateToExit = false;
-          //  await UniTask.WaitUntil(() => Input.anyKeyDown);
-
+            List<GridItem> remainingItems = gridItems.Except(simulatedUsedItems).ToList();
             List<GridItem> group = new List<GridItem>();
-            List<GridItem> allGroups = new List<GridItem>();
-            List<GridItem> itemsToGroup = new List<GridItem>();
+            HashSet<GridItem> visited = new HashSet<GridItem>();
+            HashSet<GridItem> allGroups = new HashSet<GridItem>();
+            HashSet<GridItem> itemsToGroup = new HashSet<GridItem>();
             bool foundGroupToIsland = false;
+            bool candidateToExit = false;
 
             foreach (var item in currentItem.Neighbors)
             {
-                if (visited.Contains(item) || !remainingItems.Contains(item)) continue;
+                if (visited.Contains(item) || !remainingItems.Contains(item))
+                    continue;
+
                 group.Clear();
                 var groupSize = await GetConnectedGroupSize(item, remainingItems, visited, group);
                 allGroups.AddRange(group);
-            
+
                 if (!candidateToExit && (groupSize + currentIsland.Count) % targetGroupSize != 0)
                 {
-                    currentItem.SetColor(colr);
                     candidateToExit = true;
                 }
 
@@ -227,62 +247,45 @@ namespace App.Scripts.Generator.Handlers
                     foundGroupToIsland = true;
                 }
 
-                if (group.Count == 1 && currentIsland.Count + 1 < targetGroupSize)
+                if (!candidateToExit && !foundGroupToIsland && groupSize < targetGroupSize)
                 {
-                    foundGroupToIsland = true;
-                    currentIsland.AddRange(group);
+                    return true;
                 }
             }
 
             if (candidateToExit)
             {
-                if (allGroups.Count == targetGroupSize - currentIsland.Count)
-                {
-                    Debug.Log("created island force big");
-                    currentIsland.AddRange(allGroups);
-                    usedItems.AddRange(allGroups);
-                    return false;
-                }
-
-                return true;
+                return TryConnectGroupsAround(currentIsland, targetGroupSize, allGroups);
             }
 
-            if (itemsToGroup.Count > 0)
-            {
-                Debug.Log("created island force");
-                currentIsland.AddRange(itemsToGroup);
-                usedItems.AddRange(itemsToGroup);
-                usedItems.Add(currentItem);
-            }
+            TryAddGroupToIsland(currentItem, currentIsland, itemsToGroup);
 
             return false;
         }
 
-        private static async Task DebugGroupSize(GridItem currentItem, List<GridItem> currentIsland,
-            List<GridItem> group)
+        private static void TryAddGroupToIsland(GridItem currentItem,
+            List<GridItem> currentIsland, HashSet<GridItem> itemsToGroup)
         {
-            foreach (var i in currentIsland)
-                i.SetColor(Color.red);
-            currentItem.SetColor(Color.cyan);
-
-            foreach (var i in group)
+            if (itemsToGroup.Count > 0)
             {
-                i.SetColor(Color.magenta);
-            }
-
-            await UniTask.WaitUntil(() => Input.anyKeyDown);
-
-            foreach (var i in currentIsland)
-                i.SetColor(Color.gray);
-            currentItem.SetColor(Color.gray);
-
-            foreach (var i in group)
-            {
-                i.SetColor(Color.gray);
+                currentIsland.AddRange(itemsToGroup);
+                currentIsland.Add(currentItem);
             }
         }
 
-        private async UniTask<int> GetConnectedGroupSize(GridItem startItem, List<GridItem> remainingItems,
+        private static bool TryConnectGroupsAround(List<GridItem> currentIsland,
+            int targetGroupSize, HashSet<GridItem> allGroups)
+        {
+            if (allGroups.Count == targetGroupSize - currentIsland.Count)
+            {
+                currentIsland.AddRange(allGroups);
+                return false;
+            }
+
+            return true;
+        }
+
+        private UniTask<int> GetConnectedGroupSize(GridItem startItem, List<GridItem> remainingItems,
             HashSet<GridItem> visited,
             List<GridItem> island)
         {
@@ -307,7 +310,7 @@ namespace App.Scripts.Generator.Handlers
                 }
             }
 
-            return size;
+            return UniTask.FromResult(size);
         }
     }
 
@@ -317,6 +320,5 @@ namespace App.Scripts.Generator.Handlers
         public int groupSize;
         public float percent;
         public bool shuffleDirections;
-        public bool shuffleStartValue;
     }
 }
