@@ -22,4 +22,9 @@ public class GridItem : MonoBehaviour
     {
         image.color = color;
     }
+
+    public Color GetColor()
+    {
+        return image.color;
+    }
 }
