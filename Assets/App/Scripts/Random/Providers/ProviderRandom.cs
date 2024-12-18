@@ -5,23 +5,30 @@ namespace App.Scripts.Random.Providers
 {
     public class ProviderRandom : IProviderRandom, IInitializable
     {
-        private readonly int _seed;
+        private readonly System.Random _random;
 
-        public ProviderRandom(int seed = 0)
+        public ProviderRandom(int seed = -1)
         {
-            _seed = DateTime.Now.Millisecond;
+            int seed1;
+            if (seed == -1)
+            {
+                _random = new System.Random(DateTime.Now.Millisecond);
+                return;
+            }
+          
+            seed1 = seed;
+            _random = new System.Random(seed1);
         }
 
-        public float Value => UnityEngine.Random.value;
+        public float Value => (float)_random.NextDouble();
         
         public void Initialize()
         {
-            UnityEngine.Random.InitState(_seed);
         }
 
         public int Range(int i, int usedItemsCount)
         {
-            return UnityEngine.Random.Range(i, usedItemsCount);
+            return _random.Next(i, usedItemsCount);
         }
     }
 }

@@ -432,15 +432,14 @@ MonoBehaviour:
   autoRun: 1
   autoInjectGameObjects: []
   configSorterGroups:
-    groupSize: 3
+    groupSize: 4
     percent: 1
     shuffleDirections: 1
-    shuffleStartValue: 0
   configServiceSorter:
     prefabItem: {fileID: 9213117136375847013, guid: 497c13b1b8b9d4e0e958171237c60cd9, type: 3}
     grid: {fileID: 1488147367}
     defaultColor: {r: 0.31132078, g: 0.31132078, b: 0.31132078, a: 1}
-    gridSize: 10
+    gridSize: 8
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

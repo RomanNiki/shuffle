@@ -15,7 +15,8 @@ namespace App.Scripts.Generator.Bootstrap
         protected override void Configure(IContainerBuilder builder)
         {
             base.Configure(builder);
-            builder.Register<HandlerSorterGroups>(Lifetime.Scoped).As<IHandlerSorter>().WithParameter(configSorterGroups);
+          //  builder.Register<HandlerSorterGroups>(Lifetime.Scoped).As<IHandlerSorter>().WithParameter(configSorterGroups);
+          builder.Register<HandlerSorterNotMatch>(Lifetime.Scoped).As<IHandlerSorter>();
 
 
             builder.Register<ServiceSorter>(Lifetime.Singleton).WithParameter(configServiceSorter)

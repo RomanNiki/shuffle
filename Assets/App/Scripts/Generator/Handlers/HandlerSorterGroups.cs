@@ -58,12 +58,6 @@ namespace App.Scripts.Generator.Handlers
 
             while (usedItems.Count < _targetUseItems && potentialStart.Count > 0)
             {
-                foreach (GridItem item in potentialStart)
-                {
-                    item.SetColor(Color.magenta);
-                }
-
-                //await UniTask.WaitUntil(() => Input.anyKeyDown);
                 currentIsland.Clear();
                 var currentItem = potentialStart[0];
 
@@ -84,7 +78,7 @@ namespace App.Scripts.Generator.Handlers
 
                 ApplyIslandToWorld(currentIsland, usedItems, potentialStart, islandCount);
 
-                await UniTask.WaitUntil(() => Input.anyKeyDown);
+              //  await UniTask.WaitUntil(() => Input.anyKeyDown);
             }
 
             Debug.Log("Finished sorting");
@@ -218,6 +212,10 @@ namespace App.Scripts.Generator.Handlers
             HashSet<GridItem> simulatedUsedItems = new HashSet<GridItem>(usedItems);
             simulatedUsedItems.UnionWith(currentIsland);
             simulatedUsedItems.Add(currentItem);
+            
+            currentItem.SetColor(Color.blue);
+
+          //  await UniTask.WaitUntil(() => Input.anyKeyDown);
 
             List<GridItem> remainingItems = gridItems.Except(simulatedUsedItems).ToList();
             List<GridItem> group = new List<GridItem>();
@@ -231,7 +229,8 @@ namespace App.Scripts.Generator.Handlers
             {
                 if (visited.Contains(item) || !remainingItems.Contains(item))
                     continue;
-
+                
+                
                 group.Clear();
                 var groupSize = await GetConnectedGroupSize(item, remainingItems, visited, group);
                 allGroups.AddRange(group);
@@ -252,6 +251,7 @@ namespace App.Scripts.Generator.Handlers
                     return true;
                 }
             }
+            
 
             if (candidateToExit)
             {
